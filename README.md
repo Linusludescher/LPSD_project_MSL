@@ -1,14 +1,14 @@
  # LPSD Design Project Challenge
  Max, Stefan, Linus
 
- Based on: 
- -ESP wifi example
- -Stefan ADC code
- -ChatGPT
+ ## Based on: 
+ - ESP wifi example
+ - Stefan ADC code
+ - ChatGPT
  
  This readme must be updated...
 
- Was verbessert werden muss: 
+## Was verbessert werden muss: 
 
 nach deepsleep startet main von neu (das ist so), darum: 
 - MIT RTC and NVS memory daten durch deepsleep speichern

@@ -19,6 +19,8 @@
 #include "lwip/sys.h"
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
+#include "time.h"
+
 
 /* The examples use WiFi configuration that you can set via project configuration menu
 
@@ -68,8 +70,7 @@ static EventGroupHandle_t s_wifi_event_group;
 
 static const char *TAG = "esp111";
 
-static int s_retry_num = 0;
-
+static int s_retry_num = 3;
 
 static void event_handler(void* arg, esp_event_base_t event_base,
                                 int32_t event_id, void* event_data)
@@ -80,14 +81,14 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         if (s_retry_num < EXAMPLE_ESP_MAXIMUM_RETRY) {
             esp_wifi_connect();
             s_retry_num++;
-            ESP_LOGI(TAG, "retry to connect to the AP");
+            //ESP_LOGI(TAG, "retry to connect to the AP");
         } else {
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
         }
-        ESP_LOGI(TAG,"connect to the AP fail");
+        //ESP_LOGI(TAG,"connect to the AP fail");
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-        ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        //ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
@@ -136,7 +137,7 @@ void wifi_init_sta(void)
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
     ESP_ERROR_CHECK(esp_wifi_start() );
 
-    ESP_LOGI(TAG, "wifi_init_sta finished.");
+    //ESP_LOGI(TAG, "wifi_init_sta finished.");
 
     /* Waiting until either the connection is established (WIFI_CONNECTED_BIT) or connection failed for the maximum
      * number of re-tries (WIFI_FAIL_BIT). The bits are set by event_handler() (see above) */
@@ -171,6 +172,102 @@ void send_data_to_server(const char *data) {
     // Create a socket
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
+        //ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
+        return;
+    }
+    ESP_LOGI(TAG, "Socket created");
+
+    // Configure the server address
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+
+    // Convert the hostname to an IP address
+    struct hostent *host = gethostbyname(HOST);
+    if (host == NULL) {
+        //ESP_LOGE(TAG, "DNS lookup failed for %s", HOST);
+        close(sock);
+        return;
+    }
+    memcpy(&server_addr.sin_addr, host->h_addr, host->h_length);
+
+    // Connect to the server
+    if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) != 0) {
+        //ESP_LOGE(TAG, "Socket connection failed: errno %d", errno);
+        close(sock);
+        return;
+    }
+
+    ESP_LOGI(TAG, "Connected to server");
+
+    // Send data
+    int err = send(sock, data, strlen(data), 0);
+    if (err < 0) {
+        ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
+    } else {
+    ESP_LOGI(TAG, "Message sent successfully: %s", data);
+    }
+
+    // Close the socket
+    close(sock);
+    //ESP_LOGI(TAG, "Socket closed");
+}
+
+void connect_and_send(float temp)
+{
+    //Initialize NVS
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+      ESP_ERROR_CHECK(nvs_flash_erase());
+      ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    //ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
+    wifi_init_sta();
+
+    char message[128];
+    time_t now;
+    struct tm timeinfo;
+    time(&now);
+    localtime_r(&now, &timeinfo);
+    char timestamp[32];
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S+00:00", &timeinfo);
+    sprintf(message, "%s,08,%.4f,123\n", timestamp, temp);
+    send_data_to_server(message);
+}
+
+void send_data_to_server_array(const char *data, int sock) {
+    // Send data
+    int err = send(sock, data, strlen(data), 0);
+    if (err < 0) {
+        ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
+    } else {
+    ESP_LOGI(TAG, "Message sent successfully: %s", data);
+    }
+}
+
+void connect_and_send_array(float *temp_data)
+{
+    //Initialize NVS
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+      ESP_ERROR_CHECK(nvs_flash_erase());
+      ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    //ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
+    wifi_init_sta();
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+
+    const char *TAG = "TCP_CLIENT";
+    int sock = -1;
+    struct sockaddr_in server_addr;
+
+    // Create a socket
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
         ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
         return;
     }
@@ -196,47 +293,23 @@ void send_data_to_server(const char *data) {
         close(sock);
         return;
     }
+    
     ESP_LOGI(TAG, "Connected to server");
 
-    // Send data
-    int err = send(sock, data, strlen(data), 0);
-    if (err < 0) {
-        ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
-    } else {
-        ESP_LOGI(TAG, "Message sent successfully: %s", data);
+    for(uint8_t i = 0; i < 10; i++){
+        char message[128];
+        time_t now;
+        struct tm timeinfo;
+        time(&now);
+        now -=30*(9-i);
+        localtime_r(&now, &timeinfo);
+        char timestamp[32];
+        strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S+01:00", &timeinfo);
+        sprintf(message, "%s,08,%.4f,123\n", timestamp, temp_data[i]);
+        send_data_to_server_array(message, sock);
+        vTaskDelay(5 / portTICK_PERIOD_MS);
     }
-
     // Close the socket
     close(sock);
-    ESP_LOGI(TAG, "Socket closed");
-}
-
-void Send_test() {
-    // Ensure Wi-Fi is connected before calling this function
-    const char *message = "2026-03-14 21:00:00+00:00,92,6.8085,yes it wo\n";
-    send_data_to_server(message);
-}
-
-void connect_and_send(float temp)
-{
-    //Initialize NVS
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-      ESP_ERROR_CHECK(nvs_flash_erase());
-      ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
-
-    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
-    wifi_init_sta();
-
-    // char message[128];
-    // time_t now;
-    // struct tm timeinfo;
-    // time(&now);
-    // localtime_r(&now, &timeinfo);
-    // char timestamp[32];
-    // strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S+00:00", &timeinfo);
-    // sprintf(message, "%s,08,%.4f,123\n", timestamp, temp);
-    //send_data_to_server(message);
+    //ESP_LOGI(TAG, "Socket closed");   // Close the socket
 }
